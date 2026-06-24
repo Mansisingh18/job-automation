@@ -31,30 +31,47 @@ class LinkedInPortal(JobPortal):
 
         await self._handle_checkpoint()
 
-        # Try to find and fill the email field — use locator which retries automatically
-        try:
-            email = self.page.locator("input[name='session_key']").first
-            await email.wait_for(timeout=15000)
-            await email.click()
-            await asyncio.sleep(0.5)
-            await email.fill(self.creds["email"])
-            log.info("Filled email")
-        except Exception:
-            log.warning("Could not fill email automatically — logging in manually. Press Enter when done.")
-            input("Press Enter after logging in...")
+        # Debug: log all input fields visible on the page
+        inputs = await self.page.evaluate(
+            "() => [...document.querySelectorAll('input')].map(i => ({name: i.name, id: i.id, type: i.type, placeholder: i.placeholder}))"
+        )
+        log.info("Inputs on page: %s", inputs)
+
+        # Try all known LinkedIn email selectors
+        email_sel = None
+        for sel in ["input[name='session_key']", "input[autocomplete='username']",
+                    "input[type='email']", "input[placeholder*='Email' i]", "input[placeholder*='phone' i]"]:
+            try:
+                await self.page.wait_for_selector(sel, timeout=5000)
+                email_sel = sel
+                break
+            except Exception:
+                continue
+
+        if not email_sel:
+            log.warning("No email input found — inputs on page logged above. Manual login needed.")
+            input("Log in manually in the browser, then press Enter...")
             return
 
-        try:
-            password = self.page.locator("input[name='session_password']").first
-            await password.wait_for(timeout=10000)
-            await password.click()
+        await self.page.click(email_sel)
+        await asyncio.sleep(0.3)
+        await self.page.fill(email_sel, self.creds["email"])
+        log.info("Filled email with selector: %s", email_sel)
+
+        pass_sel = None
+        for sel in ["input[name='session_password']", "input[type='password']"]:
+            try:
+                await self.page.wait_for_selector(sel, timeout=5000)
+                pass_sel = sel
+                break
+            except Exception:
+                continue
+
+        if pass_sel:
+            await self.page.click(pass_sel)
             await asyncio.sleep(0.3)
-            await password.fill(self.creds["password"])
+            await self.page.fill(pass_sel, self.creds["password"])
             log.info("Filled password")
-        except Exception:
-            log.warning("Could not fill password — do it manually and press Enter.")
-            input("Press Enter after logging in...")
-            return
 
         await self.page.locator("button[type='submit']").click()
         await self.page.wait_for_load_state("domcontentloaded", timeout=30000)
