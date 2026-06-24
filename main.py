@@ -13,7 +13,6 @@ import asyncio
 import sys
 from pathlib import Path
 
-import yaml
 from playwright.async_api import async_playwright
 
 from platforms import PORTALS
@@ -22,15 +21,21 @@ from utils import logger, tracker
 log = logger.get("main")
 
 
-def load_config(path: str = "config.yaml") -> dict:
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+def load_config() -> dict:
+    import config as c
+    return {
+        "resume":      {"path": c.RESUME_PATH},
+        "search":      c.SEARCH,
+        "filters":     c.FILTERS,
+        "credentials": c.CREDENTIALS,
+        "browser":     c.BROWSER,
+    }
 
 
 def validate_config(cfg: dict):
     resume = cfg["resume"]["path"]
     if not Path(resume).exists():
-        sys.exit(f"Resume not found at: {resume}\nUpdate config.yaml → resume.path")
+        sys.exit(f"Resume not found at: {resume}\nUpdate RESUME_PATH in config.py")
     for portal, creds in cfg["credentials"].items():
         if not creds.get("email"):
             log.warning("No credentials for %s — it will be skipped", portal)
@@ -92,7 +97,7 @@ async def main():
     portals_to_run = [p for p in portals_to_run if cfg["credentials"].get(p, {}).get("email")]
 
     if not portals_to_run:
-        sys.exit("No portals configured — fill in credentials in config.yaml")
+        sys.exit("No portals configured — fill in credentials in config.py")
 
     log.info("Running portals: %s", ", ".join(portals_to_run))
 
