@@ -1,0 +1,45 @@
+resume:
+  path: "/path/to/your/resume.pdf"
+
+search:
+  keywords:
+    - "Senior Data Engineer"
+    - "Data Engineer"
+    - "AWS Data Engineer"
+    - "Analytics Engineer"
+    - "Data Platform Engineer"
+    - "Big Data Engineer"
+  location: "Bengaluru"
+  experience_years: 5
+  job_type: "full_time"
+  remote: true
+  max_applications_per_run: 20
+
+filters:
+  min_salary: 2000000          # INR annual (for Naukri/Shine filters)
+  exclude_keywords:
+    - "intern"
+    - "fresher"
+    - "trainee"
+    - "junior"
+    - "entry level"
+    - "0-2 years"
+
+credentials:
+  naukri:
+    email: "you@example.com"
+    password: "yourpassword"
+  linkedin:
+    email: "you@example.com"
+    password: "yourpassword"
+  indeed:
+    email: "you@example.com"
+    password: "yourpassword"
+  shine:
+    email: "you@example.com"
+    password: "yourpassword"
+
+browser:
+  headless: false    # keep false to handle OTPs/captchas manually
+  slow_mo: 800       # ms between actions — helps avoid bot detection
+  timeout: 30000
