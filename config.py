@@ -17,7 +17,7 @@ SEARCH = {
 }
 
 FILTERS = {
-    "min_salary": 2000000,
+    "min_salary": 2500000,
     "exclude_keywords": ["intern", "fresher", "trainee", "junior", "entry level", "0-2 years"],
 }
 
