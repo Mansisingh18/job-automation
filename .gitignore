@@ -1,5 +1,4 @@
 config.yaml
-config.py
 applied_jobs.db
 run.log
 *.pdf
