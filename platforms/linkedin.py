@@ -14,16 +14,45 @@ class LinkedInPortal(JobPortal):
     BASE = "https://www.linkedin.com"
 
     async def login(self):
-        await self.page.goto(f"{self.BASE}/login")
+        await self.page.goto(f"{self.BASE}/login", wait_until="domcontentloaded")
+        await asyncio.sleep(3)
+        log.info("LinkedIn page loaded — URL: %s", self.page.url)
+
+        # Take screenshot to see what LinkedIn is showing
+        await self.page.screenshot(path="linkedin_debug.png")
+        log.info("Screenshot saved to linkedin_debug.png — check it if login fails")
+
+        # If already logged in, skip
+        if "/feed" in self.page.url or "/jobs" in self.page.url:
+            log.info("Already logged in to LinkedIn")
+            return
+
+        # Handle security/captcha wall before the login form
+        if "checkpoint" in self.page.url or "challenge" in self.page.url or "captcha" in self.page.url:
+            log.warning("LinkedIn security check before login — complete it in the browser, then press Enter")
+            input("Press Enter after completing the check...")
+
+        # Wait up to 60s for the username field (CAPTCHA might need manual solve)
+        try:
+            await self.page.wait_for_selector("input#username", timeout=60000)
+        except Exception:
+            log.warning("input#username not found — pausing for manual login. Press Enter when logged in.")
+            input("Log in manually in the browser, then press Enter...")
+            return
+
+        await asyncio.sleep(1)
         await self.page.fill("input#username", self.creds["email"])
+        await asyncio.sleep(0.5)
         await self.page.fill("input#password", self.creds["password"])
+        await asyncio.sleep(0.5)
         await self.page.click("button[type='submit']")
-        await self.page.wait_for_load_state("networkidle", timeout=20000)
-        # Pause if 2FA checkpoint appears
+        await self.page.wait_for_load_state("domcontentloaded", timeout=30000)
+        await asyncio.sleep(3)
+
         if "checkpoint" in self.page.url or "challenge" in self.page.url:
-            log.warning("LinkedIn 2FA detected — please complete manually, then press Enter")
-            input("Press Enter after completing 2FA...")
-        log.info("Logged in to LinkedIn")
+            log.warning("LinkedIn 2FA/checkpoint — complete it in the browser, then press Enter")
+            input("Press Enter after completing the check...")
+        log.info("Logged in to LinkedIn — URL: %s", self.page.url)
 
     async def search_and_apply(self):
         filters = self.cfg.get("filters", {})

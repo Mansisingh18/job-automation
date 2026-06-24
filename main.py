@@ -46,15 +46,23 @@ async def run_portal(portal_name: str, cfg: dict):
         browser = await pw.chromium.launch(
             headless=cfg["browser"]["headless"],
             slow_mo=cfg["browser"]["slow_mo"],
-            args=["--start-maximized"],
+            channel="chrome",   # use installed Chrome, much less detectable than Playwright Chromium
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+            ],
         )
         context = await browser.new_context(
-            viewport=None,
+            viewport={"width": 1280, "height": 800},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
+        )
+        # Hide webdriver flag that sites use to detect automation
+        await context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         page = await context.new_page()
 

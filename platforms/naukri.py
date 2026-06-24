@@ -15,12 +15,63 @@ class NaukriPortal(JobPortal):
     BASE = "https://www.naukri.com"
 
     async def login(self):
-        await self.page.goto(f"{self.BASE}/nlogin/login")
-        await self.page.fill("input[placeholder='Enter your active Email ID']", self.creds["email"])
-        await self.page.fill("input[placeholder='Enter your password']", self.creds["password"])
+        await self.page.goto(f"{self.BASE}/nlogin/login", wait_until="domcontentloaded")
+        await asyncio.sleep(3)
+        await self.page.screenshot(path="naukri_debug.png")
+        log.info("Naukri login page loaded — URL: %s", self.page.url)
+
+        # Try multiple possible email selectors (Naukri changes these periodically)
+        email_selectors = [
+            "input[placeholder='Enter your active Email ID']",
+            "input[placeholder*='Email' i]",
+            "input[type='email']",
+            "input[name='email']",
+            "input[name='username']",
+            "input#usernameField",
+        ]
+        email_el = None
+        for sel in email_selectors:
+            try:
+                await self.page.wait_for_selector(sel, timeout=5000)
+                email_el = sel
+                log.info("Found email field with selector: %s", sel)
+                break
+            except Exception:
+                continue
+
+        if not email_el:
+            log.warning("Could not find email field — check naukri_debug.png. Pausing for manual login.")
+            input("Log in manually in the browser, then press Enter...")
+            return
+
+        await self.page.fill(email_el, self.creds["email"])
+        await asyncio.sleep(0.5)
+
+        password_selectors = [
+            "input[placeholder='Enter your password']",
+            "input[placeholder*='password' i]",
+            "input[type='password']",
+            "input[name='password']",
+        ]
+        for sel in password_selectors:
+            try:
+                await self.page.wait_for_selector(sel, timeout=3000)
+                await self.page.fill(sel, self.creds["password"])
+                log.info("Found password field with selector: %s", sel)
+                break
+            except Exception:
+                continue
+
+        await asyncio.sleep(0.5)
         await self.page.click("button[type='submit']")
-        await self.page.wait_for_load_state("networkidle", timeout=15000)
-        log.info("Logged in to Naukri")
+        await self.page.wait_for_load_state("domcontentloaded", timeout=20000)
+        await asyncio.sleep(2)
+
+        if "login" in self.page.url:
+            log.warning("Still on login page — may need OTP. Check browser and press Enter when done.")
+            input("Press Enter after completing login...")
+
+        log.info("Logged in to Naukri — URL: %s", self.page.url)
 
     async def _upload_resume(self):
         try:
@@ -44,13 +95,14 @@ class NaukriPortal(JobPortal):
                 break
             location = self.search_cfg["location"]
             exp = self.search_cfg["experience_years"]
-            url = (
-                f"{self.BASE}/{quote_plus(keyword.lower().replace(' ', '-'))}-jobs-in-"
-                f"{quote_plus(location.lower())}?experience={exp}"
-            )
+            slug = quote_plus(keyword.lower().replace(" ", "-"))
+            if location:
+                url = f"{self.BASE}/{slug}-jobs-in-{quote_plus(location.lower())}?experience={exp}"
+            else:
+                url = f"{self.BASE}/{slug}-jobs?experience={exp}"
             log.info("Searching: %s", url)
-            await self.page.goto(url)
-            await self.page.wait_for_load_state("networkidle")
+            await self.page.goto(url, wait_until="domcontentloaded")
+            await asyncio.sleep(3)
             await self._process_listings(exclude)
 
     async def _process_listings(self, exclude: list):
