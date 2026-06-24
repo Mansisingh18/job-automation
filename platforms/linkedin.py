@@ -1,7 +1,7 @@
 import asyncio
 import re
 
-from playwright.async_api import TimeoutError as PWTimeout
+from playwright.async_api import TimeoutError as PWTimeout, Error as PWError
 
 from platforms.base import JobPortal
 from utils import logger, tracker
@@ -13,60 +13,67 @@ class LinkedInPortal(JobPortal):
     name = "linkedin"
     BASE = "https://www.linkedin.com"
 
+    async def _handle_checkpoint(self):
+        if any(x in self.page.url for x in ("checkpoint", "challenge", "captcha")):
+            log.warning("LinkedIn security check — complete it in the browser, then press Enter")
+            input("Press Enter after completing the LinkedIn verification...")
+            await asyncio.sleep(2)
+
     async def login(self):
         await self.page.goto(f"{self.BASE}/login", wait_until="domcontentloaded")
-        await asyncio.sleep(3)
-        log.info("LinkedIn page loaded — URL: %s", self.page.url)
-
-        # Take screenshot to see what LinkedIn is showing
+        await asyncio.sleep(4)
         await self.page.screenshot(path="linkedin_debug.png")
-        log.info("Screenshot saved to linkedin_debug.png — check it if login fails")
+        log.info("LinkedIn loaded — URL: %s", self.page.url)
 
-        # If already logged in, skip
         if "/feed" in self.page.url or "/jobs" in self.page.url:
-            log.info("Already logged in to LinkedIn")
+            log.info("Already logged in")
             return
 
-        # Handle security/captcha wall before the login form
-        if "checkpoint" in self.page.url or "challenge" in self.page.url or "captcha" in self.page.url:
-            log.warning("LinkedIn security check before login — complete it in the browser, then press Enter")
-            input("Press Enter after completing the check...")
+        await self._handle_checkpoint()
 
-        # Wait for email field — LinkedIn uses name='session_key', not id='username'
-        email_selectors = [
-            "input[name='session_key']",
-            "input[autocomplete='username']",
-            "input[placeholder*='Email' i]",
-            "input#username",
-        ]
-        email_el = None
-        for sel in email_selectors:
-            try:
-                await self.page.wait_for_selector(sel, timeout=5000)
-                email_el = sel
-                log.info("Found LinkedIn email field: %s", sel)
-                break
-            except Exception:
-                continue
-
-        if not email_el:
-            log.warning("Email field not found — pausing for manual login. Press Enter when logged in.")
-            input("Log in manually in the browser, then press Enter...")
+        # Try to find and fill the email field — use locator which retries automatically
+        try:
+            email = self.page.locator("input[name='session_key']").first
+            await email.wait_for(timeout=15000)
+            await email.click()
+            await asyncio.sleep(0.5)
+            await email.fill(self.creds["email"])
+            log.info("Filled email")
+        except Exception:
+            log.warning("Could not fill email automatically — logging in manually. Press Enter when done.")
+            input("Press Enter after logging in...")
             return
 
-        await asyncio.sleep(1)
-        await self.page.fill(email_el, self.creds["email"])
-        await asyncio.sleep(0.5)
-        await self.page.fill("input[name='session_password'], input[type='password']", self.creds["password"])
-        await asyncio.sleep(0.5)
-        await self.page.click("button[type='submit']")
+        try:
+            password = self.page.locator("input[name='session_password']").first
+            await password.wait_for(timeout=10000)
+            await password.click()
+            await asyncio.sleep(0.3)
+            await password.fill(self.creds["password"])
+            log.info("Filled password")
+        except Exception:
+            log.warning("Could not fill password — do it manually and press Enter.")
+            input("Press Enter after logging in...")
+            return
+
+        await self.page.locator("button[type='submit']").click()
         await self.page.wait_for_load_state("domcontentloaded", timeout=30000)
         await asyncio.sleep(3)
+        await self._handle_checkpoint()
+        log.info("Logged in — URL: %s", self.page.url)
 
-        if "checkpoint" in self.page.url or "challenge" in self.page.url:
-            log.warning("LinkedIn 2FA/checkpoint — complete it in the browser, then press Enter")
-            input("Press Enter after completing the check...")
-        log.info("Logged in to LinkedIn — URL: %s", self.page.url)
+    async def _safe_goto(self, url: str):
+        """Navigate and handle checkpoint redirects gracefully."""
+        try:
+            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except PWError as e:
+            if "checkpoint" in str(e) or "challenge" in str(e):
+                # Wait for checkpoint page to fully load then pause for user
+                await self.page.wait_for_load_state("domcontentloaded")
+            else:
+                raise
+        await asyncio.sleep(2)
+        await self._handle_checkpoint()
 
     async def search_and_apply(self):
         filters = self.cfg.get("filters", {})
@@ -75,39 +82,30 @@ class LinkedInPortal(JobPortal):
         location = self.search_cfg["location"]
         remote = self.search_cfg.get("remote", False)
 
-        # LinkedIn experience level mapping
-        exp_level = "3"  # mid-senior
-        if exp <= 1:
-            exp_level = "1"  # internship/entry
-        elif exp <= 3:
-            exp_level = "2"  # entry level
+        exp_level = "4" if exp >= 5 else "3"  # director / mid-senior
 
         for keyword in self.search_cfg["keywords"]:
             if self._over_cap():
                 break
 
-            params = (
-                f"keywords={keyword}&location={location}"
-                f"&f_AL=true"          # Easy Apply only
-                f"&f_E={exp_level}"
-                f"&sortBy=DD"          # date posted
-            )
+            params = f"keywords={keyword}&f_AL=true&f_E={exp_level}&sortBy=DD"
+            if location:
+                params += f"&location={location}"
             if remote:
-                params += "&f_WT=2"   # remote
+                params += "&f_WT=2"
 
             url = f"{self.BASE}/jobs/search/?{params}"
             log.info("Searching LinkedIn: %s", keyword)
-            await self.page.goto(url)
-            await self.page.wait_for_load_state("networkidle")
+            await self._safe_goto(url)
             await self._process_listings(exclude)
 
     async def _process_listings(self, exclude: list):
-        # Scroll to load more jobs
         for _ in range(3):
             await self.page.keyboard.press("End")
             await asyncio.sleep(1)
 
         cards = await self.page.query_selector_all("li.jobs-search-results__list-item")
+        log.info("Found %d job cards", len(cards))
 
         for card in cards:
             if self._over_cap():
@@ -116,6 +114,9 @@ class LinkedInPortal(JobPortal):
             try:
                 await card.click()
                 await asyncio.sleep(1.5)
+
+                # Check for checkpoint mid-browsing
+                await self._handle_checkpoint()
 
                 title_el = await self.page.query_selector("h1.job-details-jobs-unified-top-card__job-title")
                 company_el = await self.page.query_selector("div.job-details-jobs-unified-top-card__company-name")
@@ -134,9 +135,11 @@ class LinkedInPortal(JobPortal):
                     log.info("Already applied: %s", title)
                     continue
 
-                easy_apply_btn = await self.page.query_selector("button.jobs-apply-button span:has-text('Easy Apply')")
+                easy_apply_btn = await self.page.query_selector(
+                    "button.jobs-apply-button span:has-text('Easy Apply')"
+                )
                 if not easy_apply_btn:
-                    log.info("No Easy Apply for: %s — skipping", title)
+                    log.info("No Easy Apply: %s — skipping", title)
                     continue
 
                 log.info("Applying (Easy Apply): %s @ %s", title, company)
@@ -150,19 +153,18 @@ class LinkedInPortal(JobPortal):
             except PWTimeout:
                 log.error("Timeout on LinkedIn listing")
                 continue
+            except PWError as e:
+                if "checkpoint" in str(e) or "challenge" in str(e):
+                    await self._handle_checkpoint()
+                else:
+                    log.error("Error on listing: %s", e)
+                continue
 
     async def _complete_easy_apply(self) -> bool:
-        """Step through Easy Apply modal, filling in basic fields and submitting."""
         try:
-            for step in range(10):  # max 10 pages in the modal
+            for step in range(10):
                 await asyncio.sleep(1)
 
-                # Phone field
-                phone_field = await self.page.query_selector("input[id*='phoneNumber']")
-                if phone_field and not await phone_field.input_value():
-                    await phone_field.fill("")   # user can pre-fill or leave blank
-
-                # Resume — LinkedIn stores last-used resume; no re-upload needed unless prompted
                 upload_btn = await self.page.query_selector("label[for*='resume']")
                 if upload_btn:
                     async with self.page.expect_file_chooser() as fc_info:
@@ -170,14 +172,12 @@ class LinkedInPortal(JobPortal):
                     fc = await fc_info.value
                     await fc.set_files(self.resume_path)
 
-                # Check for "Submit application" button (final step)
                 submit_btn = await self.page.query_selector("button[aria-label='Submit application']")
                 if submit_btn:
                     await submit_btn.click()
                     await asyncio.sleep(2)
                     return True
 
-                # Next / Review button
                 next_btn = await self.page.query_selector(
                     "button[aria-label='Continue to next step'], button[aria-label='Review your application']"
                 )
@@ -188,7 +188,6 @@ class LinkedInPortal(JobPortal):
 
             return False
         except PWTimeout:
-            # Close modal if still open
             discard = await self.page.query_selector("button[aria-label='Dismiss']")
             if discard:
                 await discard.click()
