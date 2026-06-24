@@ -9,7 +9,7 @@ SEARCH = {
         "Data Platform Engineer",
         "Big Data Engineer",
     ],
-    "location": "Bengaluru",
+    "location": "",          # blank = no restriction (open to all locations + outside India)
     "experience_years": 5,
     "job_type": "full_time",
     "remote": True,
@@ -17,7 +17,7 @@ SEARCH = {
 }
 
 FILTERS = {
-    "min_salary": 2500000,
+    "min_salary": 3000000,   # 30 LPA minimum
     "exclude_keywords": ["intern", "fresher", "trainee", "junior", "entry level", "0-2 years"],
 }
 
