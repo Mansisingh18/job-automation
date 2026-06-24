@@ -32,18 +32,32 @@ class LinkedInPortal(JobPortal):
             log.warning("LinkedIn security check before login — complete it in the browser, then press Enter")
             input("Press Enter after completing the check...")
 
-        # Wait up to 60s for the username field (CAPTCHA might need manual solve)
-        try:
-            await self.page.wait_for_selector("input#username", timeout=60000)
-        except Exception:
-            log.warning("input#username not found — pausing for manual login. Press Enter when logged in.")
+        # Wait for email field — LinkedIn uses name='session_key', not id='username'
+        email_selectors = [
+            "input[name='session_key']",
+            "input[autocomplete='username']",
+            "input[placeholder*='Email' i]",
+            "input#username",
+        ]
+        email_el = None
+        for sel in email_selectors:
+            try:
+                await self.page.wait_for_selector(sel, timeout=5000)
+                email_el = sel
+                log.info("Found LinkedIn email field: %s", sel)
+                break
+            except Exception:
+                continue
+
+        if not email_el:
+            log.warning("Email field not found — pausing for manual login. Press Enter when logged in.")
             input("Log in manually in the browser, then press Enter...")
             return
 
         await asyncio.sleep(1)
-        await self.page.fill("input#username", self.creds["email"])
+        await self.page.fill(email_el, self.creds["email"])
         await asyncio.sleep(0.5)
-        await self.page.fill("input#password", self.creds["password"])
+        await self.page.fill("input[name='session_password'], input[type='password']", self.creds["password"])
         await asyncio.sleep(0.5)
         await self.page.click("button[type='submit']")
         await self.page.wait_for_load_state("domcontentloaded", timeout=30000)
